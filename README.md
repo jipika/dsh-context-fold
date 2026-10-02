@@ -31,9 +31,11 @@ This plugin implements the fourth option, which does work:
 |---|---|
 | `context_map` | A view of its **own** context structure: one row per segment with seq range, event count and measured token cost. Without this the model is judging relevance from an undifferentiated message stream. |
 | `context_fold` | Folding **an exact range** (`from_seq` / `to_seq`, as shown by `context_map`) via `compaction.compactRegion` — or the engine's own choice when no range is given. |
-| **Two-layer nudge** | ① **Per-turn:** when a turn closes, ask once whether anything is now stale. ② **Waterline:** once the window exceeds `nudgeRatio × contextWindow`, ask from any step. |
+| **Two-layer nudge** | ① **Per-turn:** when a turn closes, ask once whether anything is now stale. ② **Waterline:** once the window exceeds `nudgeRatio × contextWindow`, ask from any step. The ask **rides the tail of the next tool result** — deliberately *not* a new message, so it can never look like the user just typed it. |
 
-The nudge is a ~60-token message phrased as an option, not an order:
+The nudge is a ~60-token line phrased as an option, not an order. It is appended to the **tail of a
+tool result**, so it reads as the system mentioning something while you work — never as a message
+from the user:
 
 > `[context-guard] Context window is now about 210000 tokens. If earlier work is finished, call context_map to see the structure and context_fold whatever is stale; if everything is still needed, ignore this.`
 
@@ -61,6 +63,10 @@ have written. **It never lacked judgement. It lacked attention.**
    `deepseek-flash` reports `1,000,000`, so `0.2` means 200k. Swap models and it adapts.
 4. **Both layers matter.** Turn-level asking is the primary path; the waterline is the safety net
    for tasks that blow up mid-turn.
+5. **Never impersonate the user.** An injected message can only land as `user/message`, which makes
+   it look like the human just typed it. The ask therefore rides a tool result instead.
+   (`developer` role is not an option: `agent/pre-step` rejects it with
+   *"developer/message and developer role must occur together"* and fails the whole request.)
 
 ## Install
 
@@ -109,8 +115,12 @@ resolves to `C:\Users\<you>\.dsh` or `/Users/<you>/.dsh` on its own.
 ## How it is wired (for plugin authors)
 
 ```
-agent/pre-step ──► resolve contextWindow (cached) ──► decide whether to ask
-                   └─ inject ~60 tokens as a durable user message (only when asking)
+agent/pre-step ──► resolve contextWindow (cached) ──► decide whether to ask; queue it
+tools/post-execute ► append ~60 tokens to the TAIL of the next tool result
+                     (not a new message — both alternatives were tested and rejected:
+                      `developer` role fails the whole request with
+                      "developer/message and developer role must occur together",
+                      and `user` impersonates the human)
 
 context_map ─────► sessionQuery.readSurface(sessionId) → events[] with seq
                    + tokenMeter.measure(session).totalTokens for real pricing

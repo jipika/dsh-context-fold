@@ -173,6 +173,11 @@ export function apply(ctx, config) {
    * 截断的，按 id 查账本可能落空，而"窗口有多大"本身是个与会话无关的量。
    */
   let lastGlobalBilled = 0
+  /**
+   * 待兑现的提醒（全局；单会话足够，多会话并发时可能串到别的会话的工具结果上）。
+   * 不在 pre-step 注入消息——那只可能以 user/message 落地，等于借用户的口说话。
+   */
+  let nudgeDue = undefined
 
   /**
    * 宽松查找：DSH 在 agent 上暴露的 session id 是**截断的**（实测比
@@ -430,7 +435,8 @@ export function apply(ctx, config) {
       const nudgeSid = (cfg.enabled && cfg.nudge && atTurnStart && decision && decision.kind === 'enter')
         ? agentSessionId(payload && payload.agent)
         : undefined
-      if (cfg.debug && atTurnStart) {
+      // 前几步都记：只记 atTurnStart 会看不见"每步检查"这条路径到底有没有跑。
+      if (cfg.debug && payload && (payload.step === undefined || payload.step <= 5)) {
         const dbgLedger = nudgeSid === undefined ? undefined : ledgerForLoose(nudgeSid)
         diag(cfg, 'nudge check: step=' + (payload && payload.step) + ' turn=' + (payload && payload.turn) +
           ' window=' + ctxWindow + ' threshold=' + nudgeThreshold +
@@ -463,17 +469,15 @@ export function apply(ctx, config) {
           // 写错字段就会发出 "about 0 tokens" 这种自相矛盾的提醒。
           const text = '[context-guard] Context window is now about ' + level +
             ' tokens. If earlier work is finished, call context_map to see the structure and context_fold whatever is stale; if everything is still needed, ignore this.'
-          decision = {
-            kind: 'enter',
-            messages: decision.messages.concat([{
-              role: 'user',
-              content: [{ type: 'text', text }],
-              id: 'ctx-nudge-' + Date.now(),
-              source: { kind: 'user' },
-            }]),
-            startsRequestSeries: decision.startsRequestSeries,
-          }
-          emit(ctx, 'info', `nudge injected for ${shortId(nudgeSid)} at ${nudgeLedger.lastBilled} tok`)
+          // 不注入消息。两条路都验证过：
+          //   role:'user'      → 能work，但看起来像用户自己打的字（设计很差）
+          //   role:'developer' → 宿主直接拒绝整个请求：
+          //     "developer/message and developer role must occur together"
+          //     （pre-step 只能产生 user/message 事件）
+          // 所以改为"挂起"，由下一次 tools/post-execute 附加到工具结果末尾：
+          // 模型在刚用完工具的地方看到它，且完全不新增消息。
+          nudgeDue = { text, at: Date.now() }
+          emit(ctx, 'info', `nudge due for ${shortId(nudgeSid)} at ${level} tok (attaches to the next tool result)`)
         }
       }
     } catch (error) {
@@ -488,6 +492,32 @@ export function apply(ctx, config) {
       emit(ctx, 'error', 'auto-fold check failed (non-fatal)', error)
     }
     return decision
+  })
+
+  // ── 兑现提醒：附加到工具结果的末尾 ────────────────────────────────────────
+  // 不新增消息，因此不会出现"像用户刚说了一句话"的效果；模型是在刚用完工具的
+  // 位置看到它，语义上也更像"系统在你干活时提了一句"。
+  ctx.on('tools/post-execute', async function (exec, result, next) {
+    const decision = await next()
+    if (nudgeDue === undefined) return decision
+    try {
+      if (!decision || decision.kind !== 'accept') return decision
+      if (Object.prototype.hasOwnProperty.call(decision, 'value')) return decision
+      if (exec !== undefined && exec !== null && exec.parent !== undefined) return decision
+      if (Date.now() - nudgeDue.at > cfg.maxPendingMs) {
+        nudgeDue = undefined
+        return decision
+      }
+      const content = decision.content !== undefined ? decision.content : result.content
+      if (!Array.isArray(content)) return decision
+      const text = nudgeDue.text
+      nudgeDue = undefined
+      diag(cfg, 'nudge attached after tool ' + String(exec && exec.name))
+      return { kind: 'accept', content: content.concat([{ type: 'text', text }]) }
+    } catch (error) {
+      emit(ctx, 'error', 'nudge attach failed (non-fatal)', error)
+      return decision
+    }
   })
 
   // ── 工具：模型也可以提前折叠（可选，不是必需路径）──────────────────────────
