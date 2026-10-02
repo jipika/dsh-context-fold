@@ -209,6 +209,8 @@ export function apply(ctx, config) {
         lastFoldAt: 0,
         autoFolds: 0,
         lastNudgeAt: 0,
+        /** 保底层已提醒到的水位档位（level / nudgeThreshold 的整数部分）。 */
+        lastNudgeTier: 0,
         nudges: 0,
       }
       ledgers.set(sid, ledger)
@@ -467,13 +469,22 @@ export function apply(ctx, config) {
         //   ① 常规：每轮收尾（新一轮的第 1 步）问一次"有没有过时的"——及时整理；
         //   ② 保底：窗口超过 nudgeRatio × contextWindow 时，任何步骤都可以提醒。
         const turnCheck = atTurnStart && cfg.nudgeMinTokens > 0 && level >= cfg.nudgeMinTokens
-        const waterlineHit = nudgeThreshold > 0 && level > nudgeThreshold
+        // 保底层 = 水位阶梯：每跨过 nudgeThreshold 一档才再问一次
+        // （200k → 400k → 600k …），而不是"一旦超过阈值就持续满足条件"。
+        // 后者只能靠冷却压着，观感是"隔一阵子随机冒一条"。
+        const prevTier = nudgeLedger !== undefined && Number.isFinite(nudgeLedger.lastNudgeTier)
+          ? nudgeLedger.lastNudgeTier
+          : 0
+        const tier = nudgeThreshold > 0 ? Math.floor(level / nudgeThreshold) : 0
+        const waterlineHit = tier > prevTier
         if (nudgeLedger !== undefined &&
             (turnCheck || waterlineHit) &&
             nudgeLedger.pending === undefined &&
             Date.now() - nudgeLedger.lastNudgeAt >= cfg.nudgeCooldownMs) {
           nudgeLedger.lastNudgeAt = Date.now()
           nudgeLedger.nudges += 1
+          // 记住跨过的档位：同一档位内不再因为保底层重复提醒。
+          if (tier > prevTier) nudgeLedger.lastNudgeTier = tier
           // 措辞刻意保持"可忽略"：这是递给它的一个选项，不是派给它的任务，
           // 免得长会话里每次触发都把它从正事上拽走。
           // 必须用 level（判定时用的那个值），不能用 nudgeLedger.lastBilled：
