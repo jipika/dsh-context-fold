@@ -40,7 +40,9 @@ const DEFAULTS = {
   discipline: false,
   // hook 驱动的自动折叠：不依赖模型自觉。
   autoFold: true,
-  // 计费输入超过这个值就登记一次折叠（0 = 关闭自动折叠）。
+  /** autoFold 的阈值也按窗口算：0.5 × contextWindow（1M → 500k），不用绝对值。 */
+  autoFoldRatio: 0.5,
+  /** 窗口尚未解析出来时的回退值（仅 autoFold 用；nudge 有自己的回退）。 */
   autoFoldWatermarkTokens: 120000,
   // 两次自动折叠之间的最小间隔，避免抖动。
   autoFoldCooldownMs: 300000,
@@ -407,16 +409,27 @@ export function apply(ctx, config) {
           console.error('[context-fold] surface probe failed: ' + String(e))
         }
       }
-      if (cfg.enabled && cfg.autoFold && cfg.autoFoldWatermarkTokens > 0) {
+      // 窗口解析放在最前面：autoFold 与 nudge 共用同一个值，且必须 await
+      // （fire-and-forget 的预热在同一 tick 里读不到缓存，会静默回退到常量阈值）。
+      const ctxWindow = await resolveContextWindow(payload && payload.agent)
+
+      // autoFold：容量驱动的自动折叠。**保持关闭**（默认 false，部署里也是 false）。
+      // 阈值同样跟着模型窗口走：用绝对值 120k 会在 1M 窗口下于 12% 占用时就动手，
+      // 比 nudge 激进得多——那是配置陷阱，不是设计。
+      if (cfg.enabled && cfg.autoFold) {
+        const autoFoldThreshold = ctxWindow > 0
+          ? Math.round(ctxWindow * cfg.autoFoldRatio)
+          : cfg.autoFoldWatermarkTokens
         const sid = agentSessionId(payload && payload.agent)
         const ledger = sid === undefined ? undefined : ledgerForLoose(sid)
-        if (ledger !== undefined &&
-            ledger.lastBilled > cfg.autoFoldWatermarkTokens &&
+        if (autoFoldThreshold > 0 &&
+            ledger !== undefined &&
+            ledger.lastBilled > autoFoldThreshold &&
             ledger.pending === undefined &&
             Date.now() - ledger.lastFoldAt >= cfg.autoFoldCooldownMs) {
-          ledger.pending = { reason: 'auto: ' + ledger.lastBilled + '>' + cfg.autoFoldWatermarkTokens, at: Date.now() }
+          ledger.pending = { reason: 'auto: ' + ledger.lastBilled + '>' + autoFoldThreshold, at: Date.now() }
           ledger.autoFolds += 1
-          emit(ctx, 'info', `auto-fold queued for ${shortId(sid)}: window ${ledger.lastBilled} tok > ${cfg.autoFoldWatermarkTokens}`)
+          emit(ctx, 'info', `auto-fold queued for ${shortId(sid)}: window ${ledger.lastBilled} tok > ${autoFoldThreshold}`)
         }
       }
 
@@ -429,8 +442,7 @@ export function apply(ctx, config) {
       // 只在**新一轮的第 1 步**提醒。挂在每一步上会打断模型连着调工具的心流；
       // 而一轮刚开始正是"上一轮已收尾"的自然节点（用户的要求）。
       const atTurnStart = cfg.nudgeAnyStep === true || (payload && (payload.step === 1 || payload.step === 0))
-      // 必须 await：否则同一 tick 读不到缓存，会静默回退到常量阈值。
-      const ctxWindow = await resolveContextWindow(payload && payload.agent)
+      // ctxWindow 已在上面解析（autoFold 与 nudge 共用同一个值）。
       const nudgeThreshold = ctxWindow > 0 ? Math.round(ctxWindow * cfg.nudgeRatio) : cfg.nudgeThresholdTokens
       const nudgeSid = (cfg.enabled && cfg.nudge && atTurnStart && decision && decision.kind === 'enter')
         ? agentSessionId(payload && payload.agent)

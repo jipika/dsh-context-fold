@@ -81,5 +81,27 @@ try {
   fail('package.json unreadable: ' + String((error && error.message) || error))
 }
 
+// 5) DEFAULTS must not repeat a key. In JS a duplicate silently overwrites (last
+//    wins) — the same class of mistake as the YAML one, minus the error message.
+try {
+  const src = readFileSync(join(root, 'index.js'), 'utf8')
+  const block = src.match(/const DEFAULTS = \{([\s\S]*?)\n\}/)
+  if (block === null) {
+    fail('could not locate the DEFAULTS block in index.js')
+  } else {
+    const seen = new Set()
+    let duplicate = null
+    for (const m of block[1].matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:/gm)) {
+      const key = m[1]
+      if (seen.has(key)) { duplicate = key; break }
+      seen.add(key)
+    }
+    if (duplicate !== null) fail('DEFAULTS repeats the key "' + duplicate + '" (JS silently overwrites the earlier one)')
+    else ok('DEFAULTS has no duplicated keys')
+  }
+} catch (error) {
+  fail('index.js unreadable: ' + String((error && error.message) || error))
+}
+
 console.log(failed === 0 ? '\nALL CHECKS PASSED' : '\n' + failed + ' CHECK(S) FAILED')
 process.exit(failed === 0 ? 0 : 1)
