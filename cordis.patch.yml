@@ -1,0 +1,34 @@
+# dsh-context-fold bundle patch.
+#
+# NOTE ON DEFAULTS: the plugin code defaults autoFold to true. This deployment
+# deliberately overrides it to false — the goal here is the MODEL judging what is
+# stale (via context_map + context_fold), not a watermark firing on its own.
+- insert:
+    - id: context-fold
+      name: dsh-context-fold
+      config:
+        enabled: true
+        debug: false
+        # 水位驱动的自动折叠：关。用户要的是"模型自己判断哪些内容过时"。
+        autoFold: false
+        # 模型自主：context_map（看结构）+ context_fold（按 seq 精确折叠）。
+        tool: true
+        # ── 两层提醒，缺一不可 ──────────────────────────────────────────────
+        # ① 常规层：每轮收尾（新一轮的第 1 步）问一次"有没有过时的内容"，
+        #    窗口达到 nudgeMinTokens 就触发。这是"及时整理"的主力。
+        # ② 保底层：窗口超过 nudgeRatio × contextWindow 时，任何步骤都可以提醒。
+        #    阈值跟着模型自动变：deepseek-flash 的 contextWindow = 1,000,000
+        #    → 0.2 × 1M = 200k（注意 header 里的 maxTokens=256000 是最大输出，不是窗口）。
+        #    引擎兜底水位是窗口的 0.8（1M → 800k），所以两层都远早于它。
+        nudge: true
+        nudgeRatio: 0.2
+        nudgeMinTokens: 30000
+        # 窗口尚未解析出来时的回退值（只在最初的步用一次）。
+        nudgeThresholdTokens: 200000
+        # 冷却：10 分钟内至多提醒一次，避免连续短轮次被打扰。
+        nudgeCooldownMs: 600000
+        # autoFold 保持关闭：那是"水位到了自动折"，绕过模型判断，与本插件的定位相反。
+        autoFold: false
+        # 静态纪律段实测无效（长上下文里会被稀释），关。
+        discipline: false
+        maxPendingMs: 600000

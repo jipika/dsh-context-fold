@@ -1,0 +1,44 @@
+{
+  "name": "dsh-context-fold",
+  "version": "0.1.0",
+  "description": "Let the model manage its own context window in DeepSeek Harness: a context map, precise range folding, and a two-layer nudge that hands the judgement back to the model.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "plugin",
+    "context-management",
+    "compaction",
+    "prompt-cache",
+    "agent"
+  ],
+  "license": "MIT",
+  "author": "jipika",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jipika/dsh-context-fold.git"
+  },
+  "homepage": "https://github.com/jipika/dsh-context-fold#readme",
+  "bugs": {
+    "url": "https://github.com/jipika/dsh-context-fold/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
