@@ -1,0 +1,3 @@
+# Keep the repository LF-only: contributors on Windows and macOS must get the
+# same bytes (the plugin is plain ESM and is edited across both).
+* text=auto eol=lf
