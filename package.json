@@ -12,8 +12,12 @@
     "index.js",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "scripts"
   ],
+  "scripts": {
+    "verify": "node scripts/verify.mjs"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
