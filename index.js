@@ -458,7 +458,10 @@ export function apply(ctx, config) {
           nudgeLedger.nudges += 1
           // 措辞刻意保持"可忽略"：这是递给它的一个选项，不是派给它的任务，
           // 免得长会话里每次触发都把它从正事上拽走。
-          const text = '[context-guard] Context window is now about ' + nudgeLedger.lastBilled +
+          // 必须用 level（判定时用的那个值），不能用 nudgeLedger.lastBilled：
+          // 账本按 id 查不到时会回退到全局水位，两者不是同一个数，
+          // 写错字段就会发出 "about 0 tokens" 这种自相矛盾的提醒。
+          const text = '[context-guard] Context window is now about ' + level +
             ' tokens. If earlier work is finished, call context_map to see the structure and context_fold whatever is stale; if everything is still needed, ignore this.'
           decision = {
             kind: 'enter',
