@@ -27,8 +27,6 @@
         nudgeThresholdTokens: 200000
         # 冷却：10 分钟内至多提醒一次，避免连续短轮次被打扰。
         nudgeCooldownMs: 600000
-        # autoFold 保持关闭：那是"水位到了自动折"，绕过模型判断，与本插件的定位相反。
-        autoFold: false
         # 静态纪律段实测无效（长上下文里会被稀释），关。
         discipline: false
         maxPendingMs: 600000
